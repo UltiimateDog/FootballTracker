@@ -13,15 +13,21 @@ def preprocess_image(image_path, show_steps=True):
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     # 1. Gaussian filter for noise reduction
+    # (5,5) kernel: removes camera noise while preserving player/ball details
+    # sigma=0: auto-calculated for optimal smoothing
     gaussian_filtered = cv2.GaussianBlur(img_rgb, (5, 5), 0)
 
     # 2. Convert to grayscale for edge detection
     gray = cv2.cvtColor(gaussian_filtered, cv2.COLOR_RGB2GRAY)
 
     # 3. Edge detection
+    # 50: low threshold catches subtle field lines and player boundaries
+    # 150: high threshold (3:1 ratio) ensures strong edges without noise
     edges = cv2.Canny(gray, 50, 150)
 
     # 4. Enhance contrast
+    # clipLimit=2.0: prevents noise amplification while boosting contrast
+    # tileGridSize=(8,8): adapts to local lighting variations across field
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
 

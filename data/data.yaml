@@ -4,6 +4,6 @@ names:
 - player
 - referee
 nc: 4
-test: ../test/images
-train: ../train/images
-val: ../valid/images
+test: /Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/data/test/images
+train: /Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/data/train/images
+val: /Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/data/valid/images
