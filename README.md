@@ -17,6 +17,16 @@ This notebook demonstrates the YOLOv8 model training process for football ball a
 
 This notebook shows YOLOv8 fine-tuning for improved football ball and player detection, featuring class balance analysis, data augmentation strategies, and comprehensive model evaluation with visualization of results.
 
+**Then:** For field detection analysis, proceed to:
+`field_tracker/field_detection_analysis.ipynb`
+
+This notebook contains analysis and implementation of football field detection algorithms.
+
+**Next:** Continue with advanced field detection:
+`field_tracker/field_detection_2.ipynb`
+
+This notebook demonstrates advanced field detection techniques and improvements.
+
 **Finally:** Complete your review with:
 `ball_and_player_trackers/Final_testing.ipynb`
 
@@ -35,10 +45,6 @@ This project implements a computer vision system for football match analysis wit
 - **Classes**: ball (0), goalkeeper (1), player (2), referee (3)
 - **Format**: YOLO format annotations (class x_center y_center width height)
 - **Primary Focus**: Ball detection and player tracking (goalkeepers and referees are detected but not the main focus)
-
-## Additional Files
-
-*Space reserved for documentation of additional analysis files and notebooks*
 
 ---
 
