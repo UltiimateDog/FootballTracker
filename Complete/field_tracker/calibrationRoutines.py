@@ -3,8 +3,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from Complete.field_tracker.Constants import corner_front_right_world, corner_front_left_world, corner_back_right_world, \
-    corner_back_left_world
+from Complete.field_tracker.Constants import (
+    corner_front_right_world, corner_front_left_world, corner_back_right_world,
+    corner_back_left_world, MIN_DISTANCE_TO_CENTER, MAX_DISTANCE_TO_CENTER,
+    MIN_PNP_POINTS, TEXT_POSITION, TEXT_FONT, TEXT_SCALE, TEXT_COLOR,
+    TEXT_THICKNESS, SOCCER_FIELD_WIDTH, SOCCER_FIELD_HEIGHT, TOP_VIEW_PIXELS_WIDTH
+)
 from Complete.field_tracker.helpers import intersect
 from Complete.field_tracker.projectionHelpers import project_to_screen
 from Complete.field_tracker.shapeDetection import find_key_points
@@ -34,7 +38,7 @@ def find_extrinsic_intrinsic_matrices(
     # Camera projection matrix
     K = np.array([[fx, 0, width / 2], [0, fx, height / 2], [0, 0, 1]])
 
-    if pixels.shape[0] <= 3:
+    if pixels.shape[0] < MIN_PNP_POINTS:
         print("Too few points to solve!")
         return None, K, guess_rot, guess_trans
 
@@ -73,7 +77,7 @@ def find_extrinsic_intrinsic_matrices(
 
     dist_to_center = np.linalg.norm(camera_position_in_world)
     print(f"Final fx = {fx:.1f}. Distance to origin = {dist_to_center:.1f}m")
-    if dist_to_center < 40.0 or dist_to_center > 100.0:
+    if dist_to_center < MIN_DISTANCE_TO_CENTER or dist_to_center > MAX_DISTANCE_TO_CENTER:
         print(
             f"PnP outputed crazy value for distance to center = {dist_to_center:.1f}m --> Skip"
         )
@@ -176,11 +180,11 @@ def display_yaw_and_focal_length(img, yaw, fx):
     img = cv2.putText(
         img,
         f"Yaw: {yaw:.0f} deg, Focal: {fx:.0f}",
-        (1280, 120),
-        cv2.FONT_HERSHEY_COMPLEX,
-        1,
-        color=(0, 255, 0),
-        thickness=2,
+        TEXT_POSITION,
+        TEXT_FONT,
+        TEXT_SCALE,
+        color=TEXT_COLOR,
+        thickness=TEXT_THICKNESS,
     )
 
     return img
@@ -196,17 +200,15 @@ def display_top_view(K, to_device_from_world, img):
     width = img.shape[1]
 
     # Top view
-    width_soccer_field = 105
-    height_soccer_field = 68
     unskewd = np.zeros((height, width, 3), np.uint8)
-    pixels_width = int(width_soccer_field / height_soccer_field * height)
+    pixels_width = int(SOCCER_FIELD_WIDTH / SOCCER_FIELD_HEIGHT * height)
     offset_x = (width - pixels_width) // 2
 
     for i in range(height):
-        z_world = -corner_front_left_world[2] - i * height_soccer_field / height
-        for j in range(1668):
+        z_world = -corner_front_left_world[2] - i * SOCCER_FIELD_HEIGHT / height
+        for j in range(TOP_VIEW_PIXELS_WIDTH):
 
-            x_world = corner_front_left_world[0] + j * width_soccer_field / pixels_width
+            x_world = corner_front_left_world[0] + j * SOCCER_FIELD_WIDTH / pixels_width
             proj = project_to_screen(
                 K, to_device_from_world, np.array([x_world, 0, z_world])
             )

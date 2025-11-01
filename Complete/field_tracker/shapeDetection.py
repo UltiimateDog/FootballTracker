@@ -6,6 +6,22 @@ import numpy as np
 from Complete.field_tracker.KeyLines import KeyLines
 from Complete.field_tracker.KeyPoints import KeyPoints
 from Complete.field_tracker.helpers import intersect
+from Complete.field_tracker.Constants import (
+    CANNY_LOW_THRESHOLD, CANNY_HIGH_THRESHOLD, CANNY_APERTURE_SIZE,
+    CANNY_CIRCLE_LOW_THRESHOLD, CANNY_CIRCLE_HIGH_THRESHOLD,
+    HOUGH_RHO, HOUGH_THETA_DIVISOR, HOUGH_THRESHOLD,
+    HOUGH_MIN_THETA_BACK_FRONT, HOUGH_MAX_THETA_BACK_FRONT,
+    HOUGH_THETA_DIVISOR_MAIN, HOUGH_THRESHOLD_MAIN, HOUGH_THRESHOLD_MAIN_OTHER,
+    HOUGH_MAX_THETA_MAIN, HOUGH_MIN_THETA_MAIN_OTHER,
+    HOUGH_THRESHOLD_GOAL, HOUGH_THRESHOLD_GOAL_SECOND,
+    HOUGH_MAX_THETA_LEFT_GOAL, HOUGH_MIN_THETA_RIGHT_GOAL,
+    DILATE_KERNEL_SIZE, FINAL_DILATE_KERNEL_SIZE, FINAL_ERODE_KERNEL_SIZE,
+    CIRCLE_SEEDS, CIRCLE_FILL_VALUE, CIRCLE_RANGE_MIN, CIRCLE_RANGE_MAX,
+    CIRCLE_CENTER_WEIGHT_FRONT, CIRCLE_CENTER_WEIGHT_BACK,
+    CIRCLE_BOUNDARY_OFFSET, CIRCLE_SIZE_RATIO,
+    GOAL_LINE_OFFSET, BLACK_PIXEL, WIDTH_FRACTION_LEFT, WIDTH_FRACTION_RIGHT,
+    THETA_TOLERANCE, MIN_DISTANCE_THRESHOLD
+)
 
 
 def find_back_front_lines(img):
@@ -18,16 +34,16 @@ def find_back_front_lines(img):
     width = img.shape[1]
 
     # Use a standard canny before performing Hough lines detection
-    dst = cv2.Canny(img, 50, 200, None, 3)
+    dst = cv2.Canny(img, CANNY_LOW_THRESHOLD, CANNY_HIGH_THRESHOLD, None, CANNY_APERTURE_SIZE)
 
     lines = cv2.HoughLines(
         dst,
-        1,
-        np.pi / 180 / 4,
-        500,
+        HOUGH_RHO,
+        np.pi / 180 / HOUGH_THETA_DIVISOR,
+        HOUGH_THRESHOLD,
         None,
-        min_theta=80 / 180 * np.pi,
-        max_theta=100 / 180 * np.pi,
+        min_theta=HOUGH_MIN_THETA_BACK_FRONT / 180 * np.pi,
+        max_theta=HOUGH_MAX_THETA_BACK_FRONT / 180 * np.pi,
     )
 
     assert lines is not None
@@ -74,7 +90,7 @@ def remove_out_of_field(img, back_line, front_line):
         theta_front = front_line[1]
         for j in range(width):
             y_front = int((rho_front - j * np.cos(theta_front)) / np.sin(theta_front))
-            img_copy[y_front:, j] = [0, 0, 0]
+            img_copy[y_front:, j] = BLACK_PIXEL
         return img_copy
 
     if front_line is None:
@@ -82,7 +98,7 @@ def remove_out_of_field(img, back_line, front_line):
         theta_back = back_line[1]
         for j in range(width):
             y_back = int((rho_back - j * np.cos(theta_back)) / np.sin(theta_back))
-            img_copy[0:y_back, j] = [0, 0, 0]
+            img_copy[0:y_back, j] = BLACK_PIXEL
         return img_copy
 
     rho_back = back_line[0]
@@ -92,8 +108,8 @@ def remove_out_of_field(img, back_line, front_line):
     for j in range(width):
         y_back = int((rho_back - j * np.cos(theta_back)) / np.sin(theta_back))
         y_front = int((rho_front - j * np.cos(theta_front)) / np.sin(theta_front))
-        img_copy[0:y_back, j] = [0, 0, 0]
-        img_copy[y_front:, j] = [0, 0, 0]
+        img_copy[0:y_back, j] = BLACK_PIXEL
+        img_copy[y_front:, j] = BLACK_PIXEL
 
     # cv2.imshow("Lines removal", img_copy)
     # cv2.waitKey(0)
@@ -108,7 +124,7 @@ def find_main_line(img):
     """
 
     # Use a canny/hough line detection to detect a vertical line
-    dst = cv2.Canny(img, 50, 200, None, 3)
+    dst = cv2.Canny(img, CANNY_LOW_THRESHOLD, CANNY_HIGH_THRESHOLD, None, CANNY_APERTURE_SIZE)
     # cv2.imshow("Canny", dst)
     # cv2.waitKey(0)
 
@@ -116,21 +132,21 @@ def find_main_line(img):
     cdst = cv2.cvtColor(dst, cv2.COLOR_GRAY2BGR)
     lines = cv2.HoughLines(
         dst,
-        1,
-        np.pi / 180 / 2,
-        200,
+        HOUGH_RHO,
+        np.pi / 180 / HOUGH_THETA_DIVISOR_MAIN,
+        HOUGH_THRESHOLD_MAIN,
         None,
         min_theta=0,
-        max_theta=40 / 180 * np.pi,
+        max_theta=HOUGH_MAX_THETA_MAIN / 180 * np.pi,
     )
 
     lines_other = cv2.HoughLines(
         dst,
-        1,
-        np.pi / 180 / 2,
-        250,
+        HOUGH_RHO,
+        np.pi / 180 / HOUGH_THETA_DIVISOR_MAIN,
+        HOUGH_THRESHOLD_MAIN_OTHER,
         None,
-        min_theta=130 / 180 * np.pi,
+        min_theta=HOUGH_MIN_THETA_MAIN_OTHER / 180 * np.pi,
         max_theta=np.pi,
     )
 
@@ -152,7 +168,7 @@ def find_central_circle(
     if back_middle_point is None or front_middle_point is None:
         return None, None, None, None
 
-    dst = cv2.Canny(img, 20, 100, None, 3)
+    dst = cv2.Canny(img, CANNY_CIRCLE_LOW_THRESHOLD, CANNY_CIRCLE_HIGH_THRESHOLD, None, CANNY_APERTURE_SIZE)
 
     width = img.shape[1]
     if debug:
@@ -163,7 +179,7 @@ def find_central_circle(
     im_floodfill = dst.copy()
 
     # Dilate to have bolder contours
-    im_floodfill = cv2.dilate(im_floodfill, kernel=np.ones((7, 7)))
+    im_floodfill = cv2.dilate(im_floodfill, kernel=np.ones(DILATE_KERNEL_SIZE))
     if debug:
         cv2.imshow("Dilatation", im_floodfill)
         cv2.waitKey(0)
@@ -175,25 +191,25 @@ def find_central_circle(
     # Floodfill from several points where we suspect the circle to be
     back_middle_point = np.array(back_middle_point)
     front_middle_point = np.array(front_middle_point)
-    center_approx = 0.3 * front_middle_point + 0.7 * back_middle_point
+    center_approx = CIRCLE_CENTER_WEIGHT_FRONT * front_middle_point + CIRCLE_CENTER_WEIGHT_BACK * back_middle_point
 
-    for seed in [-150, -100, -50, 50, 100, 150]:
+    for seed in CIRCLE_SEEDS:
         root = (int(center_approx[0]) + seed, int(center_approx[1]))
         if 0 <= root[0] < width:
             if im_floodfill[root[1], root[0]] != 0:
                 continue
-            cv2.floodFill(im_floodfill, mask, root, 128)
+            cv2.floodFill(im_floodfill, mask, root, CIRCLE_FILL_VALUE)
 
     if debug:
         cv2.imshow("Floodfill", im_floodfill)
         cv2.waitKey(0)
 
-    final_mask = cv2.inRange(im_floodfill, 127, 129)
+    final_mask = cv2.inRange(im_floodfill, CIRCLE_RANGE_MIN, CIRCLE_RANGE_MAX)
     # cv2.imshow("final_mask", final_mask)
     # cv2.waitKey(0)
 
-    final_mask = cv2.dilate(final_mask, kernel=np.ones((15, 15)))
-    final_mask = cv2.erode(final_mask, kernel=np.ones((10, 10)))
+    final_mask = cv2.dilate(final_mask, kernel=np.ones(FINAL_DILATE_KERNEL_SIZE))
+    final_mask = cv2.erode(final_mask, kernel=np.ones(FINAL_ERODE_KERNEL_SIZE))
     # cv2.imshow("final_mask", final_mask)
     # cv2.waitKey(0)
 
@@ -219,25 +235,25 @@ def find_central_circle(
     # so we must discard crazy situations
     if left_circle[0] == 0:
         left_circle = None
-    elif left_circle[0] >= behind_circle[0] - 10:
+    elif left_circle[0] >= behind_circle[0] - CIRCLE_BOUNDARY_OFFSET:
         left_circle = None
-    elif left_circle[0] >= front_circle[0] - 10:
+    elif left_circle[0] >= front_circle[0] - CIRCLE_BOUNDARY_OFFSET:
         left_circle = None
 
     if right_circle[0] == img.shape[1] - 1:
         right_circle = None
-    elif right_circle[0] <= behind_circle[0] + 10:
+    elif right_circle[0] <= behind_circle[0] + CIRCLE_BOUNDARY_OFFSET:
         right_circle = None
-    elif right_circle[0] <= front_circle[0] + 10:
+    elif right_circle[0] <= front_circle[0] + CIRCLE_BOUNDARY_OFFSET:
         right_circle = None
 
     if left_circle is not None:
-        if (front_circle[0] - left_circle[0]) < 2 * (
+        if (front_circle[0] - left_circle[0]) < CIRCLE_SIZE_RATIO * (
             front_circle[1] - behind_circle[1]
         ):
             left_circle = None
     if right_circle is not None:
-        if (right_circle[0] - front_circle[0]) < 2 * (
+        if (right_circle[0] - front_circle[0]) < CIRCLE_SIZE_RATIO * (
             front_circle[1] - behind_circle[1]
         ):
             right_circle = None
@@ -257,7 +273,7 @@ def find_goal_line(img, back_line, back_middle_point, left_line=False):
     # Use parallel to back line (slightly below) to fit a line only in the area
     # between this line and the back line
     parallel_to_back_line = back_line.copy()
-    parallel_to_back_line[0] = back_line[0] + 30 * back_line[1]
+    parallel_to_back_line[0] = back_line[0] + GOAL_LINE_OFFSET * back_line[1]
 
     height = img.shape[0]
     width = img.shape[1]
@@ -267,20 +283,20 @@ def find_goal_line(img, back_line, back_middle_point, left_line=False):
     if back_middle_point is not None:
         if left_line:
             for i in range(height):
-                img_copy[i, back_middle_point[0] :] = [0, 0, 0]
+                img_copy[i, back_middle_point[0] :] = BLACK_PIXEL
         else:
             for i in range(height):
-                img_copy[i, : int(back_middle_point[0])] = [0, 0, 0]
+                img_copy[i, : int(back_middle_point[0])] = BLACK_PIXEL
 
-    dst = cv2.Canny(img_copy, 50, 200, None, 3)
+    dst = cv2.Canny(img_copy, CANNY_LOW_THRESHOLD, CANNY_HIGH_THRESHOLD, None, CANNY_APERTURE_SIZE)
 
-    min_theta = 0 if left_line else 100 / 180 * np.pi
-    max_theta = 80 / 180 * np.pi if left_line else np.pi
+    min_theta = 0 if left_line else HOUGH_MIN_THETA_RIGHT_GOAL / 180 * np.pi
+    max_theta = HOUGH_MAX_THETA_LEFT_GOAL / 180 * np.pi if left_line else np.pi
     lines = cv2.HoughLines(
         dst,
-        1,
+        HOUGH_RHO,
         np.pi / 180,
-        60,
+        HOUGH_THRESHOLD_GOAL,
         None,
         min_theta=min_theta,
         max_theta=max_theta,
@@ -311,16 +327,16 @@ def find_goal_line(img, back_line, back_middle_point, left_line=False):
 
     # draw_line(img, goal_line, "green")
 
-    dst = cv2.Canny(img, 50, 200, None, 3)
+    dst = cv2.Canny(img, CANNY_LOW_THRESHOLD, CANNY_HIGH_THRESHOLD, None, CANNY_APERTURE_SIZE)
     # cv2.imshow("Canny", dst)
     # cv2.waitKey(0)
 
     # Second pass with larger hough detection
     lines = cv2.HoughLines(
         dst,
-        1,
+        HOUGH_RHO,
         np.pi / 180,
-        200,
+        HOUGH_THRESHOLD_GOAL_SECOND,
         None,
         min_theta=min_theta,
         max_theta=max_theta,
@@ -331,10 +347,10 @@ def find_goal_line(img, back_line, back_middle_point, left_line=False):
     if lines is None:
         return first_goal_line
 
-    min_dist = 1000
+    min_dist = MIN_DISTANCE_THRESHOLD
     for line in lines:
         theta = line[0][1]
-        if abs(theta - first_goal_line[1]) > 0.03:
+        if abs(theta - first_goal_line[1]) > THETA_TOLERANCE:
             continue
 
         intersection_with_back_line = intersect(back_line, line[0])
@@ -390,7 +406,7 @@ def find_key_points(img):
     # Last step: detect goal line if there is one showing up
     if (
         key_points.back_middle_line is not None
-        and key_points.back_middle_line[0] < width * 2 / 5
+        and key_points.back_middle_line[0] < width * WIDTH_FRACTION_LEFT
     ):
         key_lines.right_goal_line = find_goal_line(
             img, key_lines.back_line, key_points.back_middle_line, False
@@ -398,7 +414,7 @@ def find_key_points(img):
 
     if (
         key_points.back_middle_line is not None
-        and key_points.back_middle_line[0] > width * 3 / 5
+        and key_points.back_middle_line[0] > width * WIDTH_FRACTION_RIGHT
     ):
         key_lines.left_goal_line = find_goal_line(
             img, key_lines.back_line, key_points.back_middle_line, True

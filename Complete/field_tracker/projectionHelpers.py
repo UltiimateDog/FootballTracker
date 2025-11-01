@@ -3,6 +3,13 @@ import cv2
 
 from Complete.field_tracker.KeyPoints import back_middle_line_world, front_middle_line_world, corner_back_left_world, \
     corner_front_left_world, corner_front_right_world, corner_back_right_world
+from Complete.field_tracker.Constants import (
+    LINE_COLOR, LINE_THICKNESS, CIRCLE_RADIUS, CIRCLE_RESOLUTION,
+    PENALTY_LEFT_FRONT_GOAL_WORLD, PENALTY_LEFT_FRONT_FIELD_WORLD,
+    PENALTY_LEFT_BACK_FIELD_WORLD, PENALTY_LEFT_BACK_GOAL_WORLD,
+    PENALTY_RIGHT_FRONT_GOAL_WORLD, PENALTY_RIGHT_FRONT_FIELD_WORLD,
+    PENALTY_RIGHT_BACK_FIELD_WORLD, PENALTY_RIGHT_BACK_GOAL_WORLD
+)
 
 
 def project_to_screen(K, to_device_from_world, point_in_world):
@@ -32,8 +39,8 @@ def project_and_draw_lines(K, to_device_from_world, points_in_world, img):
             img,
             projected_points[i],
             projected_points[(i + 1) % nb_pts],
-            color=(0, 165, 255),
-            thickness=3,
+            color=LINE_COLOR,
+            thickness=LINE_THICKNESS,
         )
 
     return img
@@ -42,21 +49,19 @@ def project_and_draw_lines(K, to_device_from_world, points_in_world, img):
 def draw_central_circle(K, to_device_from_world, img):
     """Draw central circle on the image"""
 
-    circle_radius = 9.15
-
-    res = 25
+    res = CIRCLE_RESOLUTION
     circle_points_projected = np.zeros((res, 2), dtype=np.int32)
     for i in range(res):
         angle = i / res * np.pi * 2
         circle_points_world = (
-            np.array([np.cos(angle), 0, np.sin(angle)]) * circle_radius
+            np.array([np.cos(angle), 0, np.sin(angle)]) * CIRCLE_RADIUS
         )
         circle_points_projected[i] = project_to_screen(
             K, to_device_from_world, circle_points_world
         )
 
     img = cv2.polylines(
-        img, [circle_points_projected], isClosed=True, color=(0, 165, 255), thickness=3
+        img, [circle_points_projected], isClosed=True, color=LINE_COLOR, thickness=LINE_THICKNESS
     )
 
     return img
@@ -101,36 +106,26 @@ def draw_penalty_areas(K, to_device_from_world, img):
     Draw penalty areas on both sides
     """
 
-    penalty_left_front_goal_world = [-52.5, 0, -20.16]
-    penalty_left_front_field_world = [-36, 0, -20.16]
-    penalty_left_back_field_world = [-36, 0, 20.16]
-    penalty_left_back_goal_world = [-52.5, 0, 20.16]
-
     img = project_and_draw_lines(
         K,
         to_device_from_world,
         [
-            penalty_left_front_goal_world,
-            penalty_left_front_field_world,
-            penalty_left_back_field_world,
-            penalty_left_back_goal_world,
+            PENALTY_LEFT_FRONT_GOAL_WORLD,
+            PENALTY_LEFT_FRONT_FIELD_WORLD,
+            PENALTY_LEFT_BACK_FIELD_WORLD,
+            PENALTY_LEFT_BACK_GOAL_WORLD,
         ],
         img,
     )
 
-    penalty_right_front_goal_world = [52.5, 0, -20.16]
-    penalty_right_front_field_world = [36, 0, -20.16]
-    penalty_right_back_field_world = [36, 0, 20.16]
-    penalty_right_back_goal_world = [52.5, 0, 20.16]
-
     img = project_and_draw_lines(
         K,
         to_device_from_world,
         [
-            penalty_right_front_goal_world,
-            penalty_right_front_field_world,
-            penalty_right_back_field_world,
-            penalty_right_back_goal_world,
+            PENALTY_RIGHT_FRONT_GOAL_WORLD,
+            PENALTY_RIGHT_FRONT_FIELD_WORLD,
+            PENALTY_RIGHT_BACK_FIELD_WORLD,
+            PENALTY_RIGHT_BACK_GOAL_WORLD,
         ],
         img,
     )

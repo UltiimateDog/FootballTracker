@@ -7,6 +7,11 @@ from Complete.field_tracker.calibrationRoutines import calibrate_from_image, dis
     display_top_view
 from Complete.field_tracker.projectionHelpers import draw_pitch_lines
 from Complete.field_tracker.shapeDetection import find_key_points
+from Complete.field_tracker.Constants import (
+    DEFAULT_GUESS_FX, DEFAULT_GUESS_ROT, DEFAULT_GUESS_TRANS,
+    VIDEO_EXTENSIONS, VIDEO_FOURCC, FRAME_PROGRESS_INTERVAL,
+    TOPVIEW_SUFFIX, ANNOTATED_SUFFIX, VIDEO_OUTPUT_EXT
+)
 
 
 def process_media(input_path, output_path=None, top_view=False):
@@ -21,9 +26,9 @@ def process_media(input_path, output_path=None, top_view=False):
     """
 
     # Default camera parameter guesses
-    guess_fx = 2000
-    guess_rot = np.array([[0.25, 0, 0]])
-    guess_trans = (0, 0, 80)
+    guess_fx = DEFAULT_GUESS_FX
+    guess_rot = np.array(DEFAULT_GUESS_ROT)
+    guess_trans = DEFAULT_GUESS_TRANS
 
     input_path = Path(input_path)
 
@@ -31,21 +36,20 @@ def process_media(input_path, output_path=None, top_view=False):
         raise FileNotFoundError(f"Input path does not exist: {input_path}")
 
     # Detect if input is a video file
-    video_exts = [".mp4", ".avi", ".mov", ".mkv"]
-    is_video = input_path.suffix.lower() in video_exts
+    is_video = input_path.suffix.lower() in VIDEO_EXTENSIONS
 
     if is_video:
         cap = cv2.VideoCapture(str(input_path))
         if not cap.isOpened():
             raise ValueError(f"Cannot open video file: {input_path}")
 
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*VIDEO_FOURCC)
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         if output_path is None:
-            suffix = "_topview.mp4" if top_view else "_annotated.mp4"
+            suffix = f"{TOPVIEW_SUFFIX}{VIDEO_OUTPUT_EXT}" if top_view else f"{ANNOTATED_SUFFIX}{VIDEO_OUTPUT_EXT}"
             output_path = input_path.parent / f"{input_path.stem}{suffix}"
 
         out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
@@ -84,7 +88,7 @@ def process_media(input_path, output_path=None, top_view=False):
             out.write(frame)
 
             frame_idx += 1
-            if frame_idx % 30 == 0:
+            if frame_idx % FRAME_PROGRESS_INTERVAL == 0:
                 print(f"Processed {frame_idx} frames...")
 
         cap.release()
@@ -117,7 +121,7 @@ def process_media(input_path, output_path=None, top_view=False):
                 print("⚠️ Top-view unavailable: calibration failed.")
 
         if output_path is None:
-            suffix = "_topview" + input_path.suffix if top_view else "_annotated" + input_path.suffix
+            suffix = TOPVIEW_SUFFIX + input_path.suffix if top_view else ANNOTATED_SUFFIX + input_path.suffix
             output_path = input_path.parent / f"{input_path.stem}{suffix}"
 
         cv2.imwrite(str(output_path), img)
