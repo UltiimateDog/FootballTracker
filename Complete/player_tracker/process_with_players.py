@@ -16,13 +16,17 @@ from Complete.field_tracker.Constants import (
     TOPVIEW_SUFFIX, VIDEO_OUTPUT_EXT
 )
 from Complete.player_tracker.player_projection import process_yolo_predictions_to_topview
+from Complete.player_tracker.Constants import (
+    DEFAULT_FIELD_WIDTH_PROCESSING, DEFAULT_FIELD_HEIGHT_PROCESSING,
+    TOPVIEW_SUFFIX_PLAYERS, COMBINED_SUFFIX, TARGET_HEIGHT_COMBINED
+)
 
 
 def process_media_with_players(input_path: Union[str, Path], 
                              model_path: Union[str, Path],
                              output_path: Optional[Union[str, Path]] = None,
-                             field_width: int = 800,
-                             field_height: int = 600) -> None:
+                             field_width: int = DEFAULT_FIELD_WIDTH_PROCESSING,
+                             field_height: int = DEFAULT_FIELD_HEIGHT_PROCESSING) -> None:
     """
     Process an image or video with YOLO player detection and field projection.
     
@@ -30,8 +34,8 @@ def process_media_with_players(input_path: Union[str, Path],
         input_path: Path to input image or video
         model_path: Path to YOLO model file
         output_path: Path for output (auto-generated if None)
-        field_width: Width of output field view
-        field_height: Height of output field view
+        field_width: Width of output field view (default maintains FIFA 105m x 68m proportions)
+        field_height: Height of output field view (default maintains FIFA 105m x 68m proportions)
     """
     input_path = Path(input_path)
     model_path = Path(model_path)
@@ -75,7 +79,7 @@ def _process_image_with_players(input_path: Path, model: YOLO,
     
     # Set output path
     if output_path is None:
-        suffix = f"{TOPVIEW_SUFFIX}_players{input_path.suffix}"
+        suffix = f"{TOPVIEW_SUFFIX_PLAYERS}_players{input_path.suffix}"
         output_path = input_path.parent / f"{input_path.stem}{suffix}"
     
     # Save result
@@ -101,7 +105,7 @@ def _process_video_with_players(input_path: Path, model: YOLO,
     
     # Set output path
     if output_path is None:
-        suffix = f"{TOPVIEW_SUFFIX}_players{VIDEO_OUTPUT_EXT}"
+        suffix = f"{TOPVIEW_SUFFIX_PLAYERS}_players{VIDEO_OUTPUT_EXT}"
         output_path = input_path.parent / f"{input_path.stem}{suffix}"
     
     # Setup video writer
@@ -169,21 +173,21 @@ def create_side_by_side_view(input_path: Union[str, Path],
     # Get annotated image from YOLO
     annotated_img = results[0].plot()
     
-    # Generate top-down view
-    field_view = process_yolo_predictions_to_topview(results[0], img, 800, 600)
+    # Generate top-down view with proper FIFA proportions
+    field_view = process_yolo_predictions_to_topview(results[0], img, DEFAULT_FIELD_WIDTH_PROCESSING, DEFAULT_FIELD_HEIGHT_PROCESSING)
     
-    # Resize images to same height
-    target_height = 600
+    # Resize images to same height (use field view height as target)
+    field_height = field_view.shape[0]
     img_height, img_width = annotated_img.shape[:2]
-    new_width = int(img_width * target_height / img_height)
-    annotated_resized = cv2.resize(annotated_img, (new_width, target_height))
+    new_width = int(img_width * field_height / img_height)
+    annotated_resized = cv2.resize(annotated_img, (new_width, field_height))
     
     # Create side-by-side image
     combined = np.hstack([annotated_resized, field_view])
     
     # Set output path
     if output_path is None:
-        suffix = f"_combined{input_path.suffix}"
+        suffix = f"{COMBINED_SUFFIX}{input_path.suffix}"
         output_path = input_path.parent / f"{input_path.stem}{suffix}"
     
     # Save result
@@ -192,11 +196,11 @@ def create_side_by_side_view(input_path: Union[str, Path],
 
 
 if __name__ == "__main__":
-    # Example usage
+    # Example usage with proper FIFA field proportions (105m x 68m)
     input_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/test_content/2e57b9_1_9_png.rf.4ddf27c8067f98fd10da07374f376097.jpg"
     model_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/models/ball_and_player_model.pt"
     
-    # Process single image to top-down view
+    # Process single image to top-down view (now maintains 1:1 field scale)
     process_media_with_players(input_path, model_path)
     
     # Create side-by-side comparison

@@ -130,8 +130,8 @@ def process_media(input_path, output_path=None, top_view=False):
 
 if __name__ == "__main__":
     # Modify these parameters for testing
-    input_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/test_content/2e57b9_1_9_png.rf.4ddf27c8067f98fd10da07374f376097.jpg"
-    output_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/test_results/2e57b9_1_9_png-topview.jpg"  # Will auto-generate if None
-    top_view = True
+    input_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/test_content/demo1.mp4"
+    output_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/test_results/demo1.mp4"  # Will auto-generate if None
+    top_view = False
     
     process_media(input_path, output_path, top_view)

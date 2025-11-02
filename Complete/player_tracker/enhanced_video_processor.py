@@ -15,14 +15,18 @@ from Complete.field_tracker.Constants import (
     VIDEO_EXTENSIONS, VIDEO_FOURCC, FRAME_PROGRESS_INTERVAL, VIDEO_OUTPUT_EXT
 )
 from Complete.player_tracker.player_projection import process_yolo_predictions_to_topview
+from Complete.player_tracker.Constants import (
+    DEFAULT_FIELD_WIDTH_PROCESSING, DEFAULT_FIELD_HEIGHT_PROCESSING,
+    ENHANCED_TOPVIEW_SUFFIX, ENHANCED_COMBINED_SUFFIX
+)
 
 
 def process_video_enhanced(input_path: Union[str, Path], 
                           model_path: Union[str, Path],
                           output_path: Optional[Union[str, Path]] = None,
                           combined_view: bool = False,
-                          field_width: int = 800,
-                          field_height: int = 600) -> None:
+                          field_width: int = DEFAULT_FIELD_WIDTH_PROCESSING,
+                          field_height: int = DEFAULT_FIELD_HEIGHT_PROCESSING) -> None:
     """
     Enhanced video processing with combined view option and frame persistence.
     
@@ -61,7 +65,7 @@ def process_video_enhanced(input_path: Union[str, Path],
     
     # Set output path
     if output_path is None:
-        suffix = "_combined" if combined_view else "_topview"
+        suffix = ENHANCED_COMBINED_SUFFIX if combined_view else ENHANCED_TOPVIEW_SUFFIX
         output_path = input_path.parent / f"{input_path.stem}{suffix}{VIDEO_OUTPUT_EXT}"
     
     # Determine output dimensions
@@ -73,7 +77,7 @@ def process_video_enhanced(input_path: Union[str, Path],
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to beginning
         
         frame_height, frame_width = first_frame.shape[:2]
-        target_height = field_height
+        target_height = field_height  # Use actual field height (680px)
         new_width = int(frame_width * target_height / frame_height)
         output_width = new_width + field_width
         output_height = target_height
