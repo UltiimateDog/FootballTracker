@@ -1,0 +1,203 @@
+"""
+Process Media with Player Tracking
+
+Main processing pipeline that combines field detection with YOLO player tracking
+to generate top-down field views with player positions.
+"""
+
+import cv2
+import numpy as np
+from pathlib import Path
+from typing import Optional, Union
+from ultralytics import YOLO
+
+from Complete.field_tracker.Constants import (
+    VIDEO_EXTENSIONS, VIDEO_FOURCC, FRAME_PROGRESS_INTERVAL,
+    TOPVIEW_SUFFIX, VIDEO_OUTPUT_EXT
+)
+from Complete.player_tracker.player_projection import process_yolo_predictions_to_topview
+
+
+def process_media_with_players(input_path: Union[str, Path], 
+                             model_path: Union[str, Path],
+                             output_path: Optional[Union[str, Path]] = None,
+                             field_width: int = 800,
+                             field_height: int = 600) -> None:
+    """
+    Process an image or video with YOLO player detection and field projection.
+    
+    Args:
+        input_path: Path to input image or video
+        model_path: Path to YOLO model file
+        output_path: Path for output (auto-generated if None)
+        field_width: Width of output field view
+        field_height: Height of output field view
+    """
+    input_path = Path(input_path)
+    model_path = Path(model_path)
+    
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input path does not exist: {input_path}")
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model path does not exist: {model_path}")
+    
+    # Load YOLO model
+    print(f"Loading YOLO model from {model_path}...")
+    model = YOLO(str(model_path))
+    
+    # Detect if input is video
+    is_video = input_path.suffix.lower() in VIDEO_EXTENSIONS
+    
+    if is_video:
+        _process_video_with_players(input_path, model, output_path, field_width, field_height)
+    else:
+        _process_image_with_players(input_path, model, output_path, field_width, field_height)
+
+
+def _process_image_with_players(input_path: Path, model: YOLO, 
+                               output_path: Optional[Path],
+                               field_width: int, field_height: int) -> None:
+    """Process single image with player tracking."""
+    # Load image
+    img = cv2.imread(str(input_path))
+    if img is None:
+        raise ValueError(f"Cannot read image: {input_path}")
+    
+    print(f"Processing image: {input_path.name}")
+    
+    # Run YOLO detection
+    results = model(img, verbose=False)
+    
+    # Generate top-down view
+    field_view = process_yolo_predictions_to_topview(
+        results[0], img, field_width, field_height
+    )
+    
+    # Set output path
+    if output_path is None:
+        suffix = f"{TOPVIEW_SUFFIX}_players{input_path.suffix}"
+        output_path = input_path.parent / f"{input_path.stem}{suffix}"
+    
+    # Save result
+    cv2.imwrite(str(output_path), field_view)
+    print(f"✅ Output saved to: {output_path}")
+
+
+def _process_video_with_players(input_path: Path, model: YOLO,
+                               output_path: Optional[Path],
+                               field_width: int, field_height: int) -> None:
+    """Process video with player tracking."""
+    # Open video
+    cap = cv2.VideoCapture(str(input_path))
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {input_path}")
+    
+    # Get video properties
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    print(f"Processing video: {input_path.name}")
+    print(f"Total frames: {total_frames}, FPS: {fps}")
+    
+    # Set output path
+    if output_path is None:
+        suffix = f"{TOPVIEW_SUFFIX}_players{VIDEO_OUTPUT_EXT}"
+        output_path = input_path.parent / f"{input_path.stem}{suffix}"
+    
+    # Setup video writer
+    fourcc = cv2.VideoWriter_fourcc(*VIDEO_FOURCC)
+    out = cv2.VideoWriter(str(output_path), fourcc, fps, (field_width, field_height))
+    
+    frame_idx = 0
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Run YOLO detection
+            results = model(frame, verbose=False)
+            
+            # Generate top-down view
+            field_view = process_yolo_predictions_to_topview(
+                results[0], frame, field_width, field_height
+            )
+            
+            # Write frame
+            out.write(field_view)
+            
+            frame_idx += 1
+            if frame_idx % FRAME_PROGRESS_INTERVAL == 0:
+                progress = (frame_idx / total_frames) * 100
+                print(f"Processed {frame_idx}/{total_frames} frames ({progress:.1f}%)")
+    
+    finally:
+        cap.release()
+        out.release()
+        cv2.destroyAllWindows()
+    
+    print(f"✅ Output video saved to: {output_path}")
+
+
+def create_side_by_side_view(input_path: Union[str, Path],
+                           model_path: Union[str, Path],
+                           output_path: Optional[Union[str, Path]] = None) -> None:
+    """
+    Create side-by-side view: original image with detections + top-down field view.
+    
+    Args:
+        input_path: Path to input image
+        model_path: Path to YOLO model
+        output_path: Path for output (auto-generated if None)
+    """
+    input_path = Path(input_path)
+    model_path = Path(model_path)
+    
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input path does not exist: {input_path}")
+    
+    # Load image and model
+    img = cv2.imread(str(input_path))
+    if img is None:
+        raise ValueError(f"Cannot read image: {input_path}")
+    
+    model = YOLO(str(model_path))
+    
+    # Run detection
+    results = model(img, verbose=False)
+    
+    # Get annotated image from YOLO
+    annotated_img = results[0].plot()
+    
+    # Generate top-down view
+    field_view = process_yolo_predictions_to_topview(results[0], img, 800, 600)
+    
+    # Resize images to same height
+    target_height = 600
+    img_height, img_width = annotated_img.shape[:2]
+    new_width = int(img_width * target_height / img_height)
+    annotated_resized = cv2.resize(annotated_img, (new_width, target_height))
+    
+    # Create side-by-side image
+    combined = np.hstack([annotated_resized, field_view])
+    
+    # Set output path
+    if output_path is None:
+        suffix = f"_combined{input_path.suffix}"
+        output_path = input_path.parent / f"{input_path.stem}{suffix}"
+    
+    # Save result
+    cv2.imwrite(str(output_path), combined)
+    print(f"✅ Combined view saved to: {output_path}")
+
+
+if __name__ == "__main__":
+    # Example usage
+    input_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/test_content/2e57b9_1_9_png.rf.4ddf27c8067f98fd10da07374f376097.jpg"
+    model_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/models/ball_and_player_model.pt"
+    
+    # Process single image to top-down view
+    process_media_with_players(input_path, model_path)
+    
+    # Create side-by-side comparison
+    create_side_by_side_view(input_path, model_path)

@@ -1,5 +1,5 @@
 import numpy as np
-from helpers import draw_point
+from Complete.field_tracker.helpers import draw_point
 
 from Complete.field_tracker.Constants import corner_front_right_world, corner_front_left_world, corner_back_right_world, \
     corner_back_left_world, DIST_TO_CENTER, right_circle_world, left_circle_world, behind_circle_world, front_circle_world, \
