@@ -17,7 +17,7 @@ from Complete.field_tracker.Constants import (
     SOCCER_FIELD_WIDTH, SOCCER_FIELD_HEIGHT,
     corner_front_left_world, corner_back_left_world
 )
-from .Constants import (
+from Complete.player_tracker.Constants import (
     CLASS_NAMES, CLASS_COLORS, POINT_SIZES,
     DEFAULT_FIELD_WIDTH, DEFAULT_FIELD_HEIGHT, FIELD_BACKGROUND_COLOR,
     FIELD_LINE_COLOR, FIELD_LINE_THICKNESS, FIELD_MARGIN_RATIO,
