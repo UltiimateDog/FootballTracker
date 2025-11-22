@@ -121,9 +121,10 @@ def process_video_enhanced(input_path: Union[str, Path],
     team_classifier_trained = False
     training_crops = []
     
-    # Initialize player tracker
+    # Initialize player tracker and team history
     player_tracker = sv.ByteTrack()
-    print("Initialized individual player tracking...")
+    player_team_history = {}  # {player_id: [team_assignments]}
+    print("Initialized individual player tracking with team history...")
     
     frame_idx = 0
     try:
@@ -151,12 +152,12 @@ def process_video_enhanced(input_path: Union[str, Path],
                         team_classifier_trained = True
                         print("Team classifier training completed.")
                 
-                # Generate new views with player tracking
+                # Generate new views with player tracking and team history
                 if field_tracker_type == "ml" and pitch_detector is not None:
-                    field_view = _process_with_ml_tracker(results[0], frame, field_width, field_height, pitch_detector, team_classifier if team_classifier_trained else None, team_colors, player_tracker)
+                    field_view = _process_with_ml_tracker(results[0], frame, field_width, field_height, pitch_detector, team_classifier if team_classifier_trained else None, team_colors, player_tracker, player_team_history)
                 else:
                     field_view = _process_yolo_predictions_to_topview_with_teams(
-                        results[0], frame, field_width, field_height, team_classifier if team_classifier_trained else None, team_colors, player_tracker
+                        results[0], frame, field_width, field_height, team_classifier if team_classifier_trained else None, team_colors, player_tracker, player_team_history
                     )
                 last_valid_field_view = field_view.copy()
                 
@@ -197,6 +198,10 @@ def process_video_enhanced(input_path: Union[str, Path],
         out.release()
         cv2.destroyAllWindows()
     
+    # Display final team statistics
+    if use_team_colors and player_team_history:
+        _display_team_statistics(player_team_history)
+    
     print(f"✅ Output video saved to: {output_path}")
 
 
@@ -205,7 +210,8 @@ def _process_with_ml_tracker(yolo_results: Any, image: np.ndarray,
                            pitch_detector: MLPitchDetector,
                            team_classifier: Optional[TeamClassifier] = None,
                            team_colors: list = [(0, 255, 255), (255, 0, 255)],
-                           player_tracker: Optional[sv.ByteTrack] = None) -> np.ndarray:
+                           player_tracker: Optional[sv.ByteTrack] = None,
+                           player_team_history: dict = None) -> np.ndarray:
     """
     Process YOLO results using ML field tracker for projection.
     
@@ -302,19 +308,39 @@ def _process_yolo_predictions_to_topview_with_teams(model_predictions: Any, imag
                                                    field_width: int, field_height: int,
                                                    team_classifier: Optional[TeamClassifier] = None,
                                                    team_colors: list = [(0, 255, 255), (255, 0, 255)],
-                                                   player_tracker: Optional[sv.ByteTrack] = None) -> np.ndarray:
+                                                   player_tracker: Optional[sv.ByteTrack] = None,
+                                                   player_team_history: dict = None) -> np.ndarray:
     """Process YOLO predictions with team classification and individual player tracking."""
     from Complete.player_tracker.player_projection import PlayerProjector
     
     projector = PlayerProjector()
     
-    # Convert YOLO to supervision format for tracking
+    # Convert YOLO to supervision format
     detections_sv = sv.Detections.from_ultralytics(model_predictions)
     
-    # Apply player tracking if available
-    tracked_detections = detections_sv
-    if player_tracker is not None:
-        tracked_detections = player_tracker.update_with_detections(detections_sv)
+    # Separate ball and player detections
+    ball_detections = []
+    player_detections_mask = detections_sv.class_id != 0  # Not ball (class 0)
+    
+    # Extract ball detections separately (no tracking needed)
+    for i, cls_id in enumerate(detections_sv.class_id):
+        if cls_id == 0:  # Ball
+            ball_detections.append({
+                'box': detections_sv.xyxy[i],
+                'class_id': cls_id,
+                'confidence': detections_sv.confidence[i] if detections_sv.confidence is not None else 1.0
+            })
+    
+    # Apply tracking only to players/referees/goalkeepers
+    player_detections = sv.Detections(
+        xyxy=detections_sv.xyxy[player_detections_mask],
+        class_id=detections_sv.class_id[player_detections_mask],
+        confidence=detections_sv.confidence[player_detections_mask] if detections_sv.confidence is not None else None
+    )
+    
+    tracked_detections = player_detections
+    if player_tracker is not None and len(player_detections) > 0:
+        tracked_detections = player_tracker.update_with_detections(player_detections)
     
     # Get player crops for team classification
     player_crops = []
@@ -333,9 +359,35 @@ def _process_yolo_predictions_to_topview_with_teams(model_predictions: Any, imag
     if team_classifier is not None and len(player_crops) > 0:
         team_assignments = team_classifier.predict(player_crops)
     
-    # Convert to detection format with tracking IDs and team colors
+    # Update player team history and get stable team assignments
+    if player_team_history is None:
+        player_team_history = {}
+    
+    # Update team history for tracked players
+    player_idx = 0
+    if len(tracked_detections) > 0:
+        for i, (box, cls_id) in enumerate(zip(tracked_detections.xyxy, tracked_detections.class_id)):
+            if cls_id == 2 and tracked_detections.tracker_id is not None:  # Only for players with IDs
+                tracker_id = tracked_detections.tracker_id[i]
+                if player_idx < len(team_assignments):
+                    current_team = team_assignments[player_idx]
+                    
+                    # Initialize or update player's team history
+                    if tracker_id not in player_team_history:
+                        player_team_history[tracker_id] = []
+                    player_team_history[tracker_id].append(current_team)
+                    
+                    # Keep only recent history (last 30 frames)
+                    if len(player_team_history[tracker_id]) > 30:
+                        player_team_history[tracker_id] = player_team_history[tracker_id][-30:]
+                
+                player_idx += 1
+    
+    # Convert tracked players to detection format
     detections = []
     player_idx = 0
+    
+    # Add tracked players/referees/goalkeepers
     for i, (box, cls_id) in enumerate(zip(tracked_detections.xyxy, tracked_detections.class_id)):
         x1, y1, x2, y2 = box
         
@@ -349,14 +401,37 @@ def _process_yolo_predictions_to_topview_with_teams(model_predictions: Any, imag
         # Get tracker ID if available
         tracker_id = tracked_detections.tracker_id[i] if tracked_detections.tracker_id is not None else None
         
-        # Determine color based on class and team
-        if cls_id == 2 and team_classifier is not None and player_idx < len(team_assignments):  # player
+        # Determine color based on class and stable team assignment
+        if cls_id == 2 and tracker_id is not None and tracker_id in player_team_history:  # player with history
+            # Use most frequent team assignment from history
+            team_history = player_team_history[tracker_id]
+            if team_history:
+                stable_team = max(set(team_history), key=team_history.count)  # Most frequent team
+                color = team_colors[stable_team]
+            else:
+                color = projector.class_colors.get(cls_id, (128, 128, 128))
+        elif cls_id == 2 and team_classifier is not None and player_idx < len(team_assignments):  # new player
             color = team_colors[team_assignments[player_idx]]
             player_idx += 1
         else:
             color = projector.class_colors.get(cls_id, (128, 128, 128))
         
         detections.append([cls_id, x_center, y_center, width, height, color, tracker_id])
+    
+    # Add ball detections (no tracking needed)
+    for ball_det in ball_detections:
+        x1, y1, x2, y2 = ball_det['box']
+        
+        # Convert to YOLO format
+        img_h, img_w = image.shape[:2]
+        x_center = ((x1 + x2) / 2) / img_w
+        y_center = ((y1 + y2) / 2) / img_h
+        width = (x2 - x1) / img_w
+        height = (y2 - y1) / img_h
+        
+        # Ball gets default color, no tracker ID
+        color = projector.class_colors.get(0, (0, 255, 0))  # Green for ball
+        detections.append([0, x_center, y_center, width, height, color, None])
     
     return _process_detections_to_topview_with_colors(projector, image, detections, field_width, field_height)
 
@@ -436,7 +511,37 @@ def _process_detections_to_topview_with_colors(projector: 'PlayerProjector', ima
     return field_img
 
 
+def _display_team_statistics(player_team_history: dict) -> None:
+    """Display final team assignment statistics for each player."""
+    print("\n📊 Final Player Team Assignments:")
+    print("-" * 40)
+    
+    for player_id, team_history in player_team_history.items():
+        if team_history:
+            team_counts = {}
+            for team in team_history:
+                team_counts[team] = team_counts.get(team, 0) + 1
+            
+            most_frequent_team = max(team_counts, key=team_counts.get)
+            confidence = team_counts[most_frequent_team] / len(team_history) * 100
+            
+            team_name = "Team A" if most_frequent_team == 0 else "Team B"
+            print(f"Player {player_id}: {team_name} ({confidence:.1f}% confidence, {len(team_history)} detections)")
+    
+    print("-" * 40)
+
+
 if __name__ == "__main__":
+    # Example usage
+    input_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/test_content/demo2.mp4"
+    model_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/models/ball_and_player_model.pt"
+    pitch_model_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/models/pitch_tracker.pt"
+        
+    # Combined view with traditional tracker
+    process_video_enhanced(input_path, model_path, combined_view=True)
+    
+    # Combined view with ML tracker and team colors
+    # process_video_enhanced(input_path, model_path, combined_view=True, field_tracker_type="ml", pitch_model_path=pitch_model_path, use_team_colors=True)
     # Example usage
     input_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/test_content/demo2.mp4"
     model_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/models/ball_and_player_model.pt"
