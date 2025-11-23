@@ -24,7 +24,7 @@ def analyze_players_from_video(input_path: Union[str, Path],
                               model_path: Union[str, Path],
                               output_path: Optional[Union[str, Path]] = None) -> None:
     """
-    Analyze video to extract player information and create summary image.
+    Analyze video to extract player and ball information and create summary image.
     
     Args:
         input_path: Path to input video
@@ -64,6 +64,7 @@ def analyze_players_from_video(input_path: Union[str, Path],
     # Initialize tracking
     player_tracker = sv.ByteTrack()
     player_data = {}  # {player_id: {'crops': [], 'positions': [], 'teams': []}}
+    ball_data = {'positions': []}  # Ball tracking data
     team_classifier_trained = False
     training_crops = []
     
@@ -90,7 +91,7 @@ def analyze_players_from_video(input_path: Union[str, Path],
                 
                 # Process detections
                 _process_frame_for_analysis(results[0], frame, player_tracker, player_data, 
-                                          team_classifier if team_classifier_trained else None, fps)
+                                          team_classifier if team_classifier_trained else None, fps, ball_data)
             
             frame_idx += 1
             if frame_idx % 100 == 0:
@@ -101,13 +102,14 @@ def analyze_players_from_video(input_path: Union[str, Path],
     
     # Calculate speeds and create summary
     _calculate_player_speeds(player_data, fps)
+    _calculate_ball_speed(ball_data, fps)
     
     # Set output path
     if output_path is None:
-        output_path = input_path.parent / f"{input_path.stem}_player_analysis.jpg"
+        output_path = input_path.parent / f"{input_path.stem}_player_ball_analysis.jpg"
     
     # Create summary image
-    _create_player_summary_image(player_data, output_path)
+    _create_player_summary_image(player_data, ball_data, output_path)
     
     print(f"✅ Player analysis saved to: {output_path}")
 
@@ -129,10 +131,22 @@ def _extract_player_crops(yolo_results: Any, image: np.ndarray) -> List[np.ndarr
 
 def _process_frame_for_analysis(yolo_results: Any, frame: np.ndarray, 
                                player_tracker: sv.ByteTrack, player_data: Dict,
-                               team_classifier: Optional[TeamClassifier], fps: int) -> None:
-    """Process single frame to extract player data."""
+                               team_classifier: Optional[TeamClassifier], fps: int, ball_data: Dict) -> None:
+    """Process single frame to extract player and ball data."""
     # Convert to supervision format
     detections_sv = sv.Detections.from_ultralytics(yolo_results)
+    
+    # Process ball detections (class 0)
+    ball_mask = detections_sv.class_id == 0
+    if np.any(ball_mask):
+        ball_boxes = detections_sv.xyxy[ball_mask]
+        if len(ball_boxes) > 0:
+            # Use first ball detection
+            x1, y1, x2, y2 = ball_boxes[0]
+            center_x = (x1 + x2) / 2
+            center_y = (y1 + y2) / 2
+            ball_pos = _pixel_to_field_position(center_x, center_y, frame.shape)
+            ball_data['positions'].append(ball_pos)
     
     # Filter only players
     player_mask = detections_sv.class_id == 2
@@ -190,6 +204,7 @@ def _process_frame_for_analysis(yolo_results: Any, frame: np.ndarray,
             player_data[tracker_id]['teams'].append(team)
 
 
+
 def _pixel_to_field_position(x: float, y: float, frame_shape: Tuple[int, int]) -> Tuple[float, float]:
     """Convert pixel coordinates to approximate field position."""
     h, w = frame_shape[:2]
@@ -227,19 +242,40 @@ def _calculate_player_speeds(player_data: Dict, fps: int) -> None:
             data['team'] = 0
 
 
-def _create_player_summary_image(player_data: Dict, output_path: Path) -> None:
-    """Create summary image with player crops and statistics."""
-    if not player_data:
-        print("No players detected!")
+def _calculate_ball_speed(ball_data: Dict, fps: int) -> None:
+    """Calculate ball average speed."""
+    positions = ball_data['positions']
+    if len(positions) < 2:
+        ball_data['avg_speed'] = 0.0
         return
     
-    # Sort players by ID
+    total_distance = 0.0
+    for i in range(1, len(positions)):
+        x1, y1 = positions[i-1]
+        x2, y2 = positions[i]
+        distance = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        total_distance += distance
+    
+    time_seconds = len(positions) / fps
+    speed_ms = total_distance / time_seconds if time_seconds > 0 else 0
+    ball_data['avg_speed'] = speed_ms * 3.6  # km/h
+
+
+def _create_player_summary_image(player_data: Dict, ball_data: Dict, output_path: Path) -> None:
+    """Create summary image with player crops and ball statistics."""
+    if not player_data and not ball_data['positions']:
+        print("No players or ball detected!")
+        return
+    
+    # Sort players by ID and add ball if detected
     sorted_players = sorted(player_data.items())
+    if ball_data['positions']:
+        sorted_players.append(('BALL', ball_data))
     
     # Calculate grid layout
-    num_players = len(sorted_players)
-    cols = min(4, num_players)
-    rows = (num_players + cols - 1) // cols
+    num_items = len(sorted_players)
+    cols = min(4, num_items)
+    rows = (num_items + cols - 1) // cols
     
     # Image dimensions
     crop_size = 150
@@ -254,47 +290,61 @@ def _create_player_summary_image(player_data: Dict, output_path: Path) -> None:
     summary_img = np.ones((img_height, img_width, 3), dtype=np.uint8) * 240
     
     # Title
-    cv2.putText(summary_img, "Player Analysis Summary", (20, 30), 
+    cv2.putText(summary_img, "Player & Ball Analysis", (20, 30), 
                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
     
     # Team colors
     team_colors = [(0, 255, 255), (255, 0, 255)]  # Yellow, Magenta
     
-    for idx, (player_id, data) in enumerate(sorted_players):
+    for idx, (item_id, data) in enumerate(sorted_players):
         row = idx // cols
         col = idx % cols
         
         x_offset = col * cell_width + 20
         y_offset = row * cell_height + 60
         
-        # Draw player crop
-        if data['best_crop'] is not None:
+        # Draw player crop or ball placeholder
+        if item_id == 'BALL':
+            # Create ball placeholder
+            ball_img = np.ones((crop_size, crop_size, 3), dtype=np.uint8) * 50
+            cv2.circle(ball_img, (crop_size//2, crop_size//2), crop_size//3, (0, 255, 0), -1)
+            cv2.putText(ball_img, "BALL", (crop_size//2-25, crop_size//2+5), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            summary_img[y_offset:y_offset + crop_size, 
+                       x_offset:x_offset + crop_size] = ball_img
+            border_color = (0, 255, 0)  # Green for ball
+        elif data.get('best_crop') is not None:
             crop = data['best_crop']
-            # Resize crop to fit
             crop_resized = cv2.resize(crop, (crop_size, crop_size))
-            
-            # Add team color border
             team = data.get('team', 0)
             border_color = team_colors[team] if team < len(team_colors) else (128, 128, 128)
-            cv2.rectangle(summary_img, 
-                         (x_offset - 2, y_offset - 2),
-                         (x_offset + crop_size + 2, y_offset + crop_size + 2),
-                         border_color, 4)
-            
             summary_img[y_offset:y_offset + crop_size, 
                        x_offset:x_offset + crop_size] = crop_resized
+        else:
+            border_color = (128, 128, 128)
+        
+        # Add border
+        cv2.rectangle(summary_img, 
+                     (x_offset - 2, y_offset - 2),
+                     (x_offset + crop_size + 2, y_offset + crop_size + 2),
+                     border_color, 4)
         
         # Add text information
         text_y = y_offset + crop_size + 20
         
-        # Player ID
-        cv2.putText(summary_img, f"Player {player_id}", 
-                   (x_offset, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        # ID/Name
+        if item_id == 'BALL':
+            cv2.putText(summary_img, "Ball", 
+                       (x_offset, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        else:
+            cv2.putText(summary_img, f"Player {item_id}", 
+                       (x_offset, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
         
-        # Team
-        team_name = "Team A" if data.get('team', 0) == 0 else "Team B"
-        cv2.putText(summary_img, team_name, 
-                   (x_offset, text_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        # Team (only for players)
+        if item_id != 'BALL':
+            team_name = "Team A" if data.get('team', 0) == 0 else "Team B"
+            cv2.putText(summary_img, team_name, 
+                       (x_offset, text_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
         
         # Speed
         speed = data.get('avg_speed', 0.0)
