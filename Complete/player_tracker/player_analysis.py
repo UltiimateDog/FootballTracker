@@ -12,9 +12,6 @@ from ultralytics import YOLO
 import supervision as sv
 import math
 
-from Complete.field_tracker.Constants import (
-    SOCCER_FIELD_WIDTH, SOCCER_FIELD_HEIGHT
-)
 from Complete.player_tracker.team_tracker import TeamClassifier
 from Complete.field_tracker.calibrationRoutines import calibrate_from_image
 from Complete.field_tracker.Constants import DEFAULT_GUESS_FX, DEFAULT_GUESS_ROT, DEFAULT_GUESS_TRANS
@@ -68,6 +65,9 @@ def analyze_players_from_video(input_path: Union[str, Path],
     team_classifier_trained = False
     training_crops = []
     
+    # Calibration persistence
+    last_calibration = {'K': None, 'pose': None, 'frame_count': 0}
+
     frame_idx = 0
     try:
         while True:
@@ -91,7 +91,7 @@ def analyze_players_from_video(input_path: Union[str, Path],
                 
                 # Process detections
                 _process_frame_for_analysis(results[0], frame, player_tracker, player_data, 
-                                          team_classifier if team_classifier_trained else None, fps, ball_data)
+                                          team_classifier if team_classifier_trained else None, fps, ball_data, last_calibration)
             
             frame_idx += 1
             if frame_idx % 100 == 0:
@@ -131,8 +131,25 @@ def _extract_player_crops(yolo_results: Any, image: np.ndarray) -> List[np.ndarr
 
 def _process_frame_for_analysis(yolo_results: Any, frame: np.ndarray, 
                                player_tracker: sv.ByteTrack, player_data: Dict,
-                               team_classifier: Optional[TeamClassifier], fps: int, ball_data: Dict) -> None:
+                               team_classifier: Optional[TeamClassifier], fps: int, ball_data: Dict, last_calibration: Dict) -> None:
     """Process single frame to extract player and ball data."""
+    # Try to calibrate camera for this frame
+    K, to_device_from_world = _calibrate_frame(frame)
+
+    if to_device_from_world is not None:
+        # Successful calibration - update cache
+        last_calibration['K'] = K
+        last_calibration['pose'] = to_device_from_world
+        last_calibration['frame_count'] = 0
+    else:
+        # Calibration failed - try to use cached calibration
+        if last_calibration['K'] is not None and last_calibration['frame_count'] < 30:
+            K = last_calibration['K']
+            to_device_from_world = last_calibration['pose']
+            last_calibration['frame_count'] += 1
+        else:
+            return  # No valid calibration available, skip frame
+    
     # Convert to supervision format
     detections_sv = sv.Detections.from_ultralytics(yolo_results)
     
@@ -145,8 +162,9 @@ def _process_frame_for_analysis(yolo_results: Any, frame: np.ndarray,
             x1, y1, x2, y2 = ball_boxes[0]
             center_x = (x1 + x2) / 2
             center_y = (y1 + y2) / 2
-            ball_pos = _pixel_to_field_position(center_x, center_y, frame.shape)
-            ball_data['positions'].append(ball_pos)
+            ball_pos = _unproject_to_field((center_x, center_y), K, to_device_from_world)
+            if ball_pos is not None:
+                ball_data['positions'].append(ball_pos)
     
     # Filter only players
     player_mask = detections_sv.class_id == 2
@@ -174,10 +192,12 @@ def _process_frame_for_analysis(yolo_results: Any, frame: np.ndarray,
         if crop.size == 0:
             continue
         
-        # Calculate field position (simplified)
+        # Calculate real field position using calibration
         center_x = (x1 + x2) / 2
-        bottom_y = y2
-        field_pos = _pixel_to_field_position(center_x, bottom_y, frame.shape)
+        bottom_y = y2  # Use bottom of bbox for players (feet position)
+        field_pos = _unproject_to_field((center_x, bottom_y), K, to_device_from_world)
+        if field_pos is None:
+            continue  # Skip if unprojection fails
         
         # Initialize player data if new
         if tracker_id not in player_data:
@@ -205,13 +225,55 @@ def _process_frame_for_analysis(yolo_results: Any, frame: np.ndarray,
 
 
 
-def _pixel_to_field_position(x: float, y: float, frame_shape: Tuple[int, int]) -> Tuple[float, float]:
-    """Convert pixel coordinates to approximate field position."""
-    h, w = frame_shape[:2]
-    # Simple mapping to field coordinates (meters)
-    field_x = (x / w - 0.5) * SOCCER_FIELD_WIDTH
-    field_y = (y / h - 0.5) * SOCCER_FIELD_HEIGHT
-    return (field_x, field_y)
+def _calibrate_frame(frame: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Calibrate camera for the given frame."""
+    try:
+        guess_fx = DEFAULT_GUESS_FX
+        guess_rot = np.array(DEFAULT_GUESS_ROT)
+        guess_trans = DEFAULT_GUESS_TRANS
+        
+        K, to_device_from_world, _, _, _ = calibrate_from_image(
+            frame, guess_fx, guess_rot, guess_trans
+        )
+        return K, to_device_from_world
+    except Exception:
+        return None, None
+
+
+def _unproject_to_field(pixel_point: Tuple[float, float], K: np.ndarray, 
+                       to_device_from_world: np.ndarray) -> Optional[Tuple[float, float]]:
+    """Unproject pixel point to real field coordinates."""
+    try:
+        from Complete.player_tracker.Constants import RAY_PARALLEL_THRESHOLD, FIELD_PLANE_Y
+        
+        x_pixel, y_pixel = pixel_point
+        
+        # Convert pixel to normalized camera coordinates
+        x_norm = (x_pixel - K[0, 2]) / K[0, 0]
+        y_norm = (y_pixel - K[1, 2]) / K[1, 1]
+        
+        # Camera ray direction in camera coordinates
+        ray_camera = np.array([x_norm, y_norm, 1.0])
+        
+        # Transform ray to world coordinates
+        to_world_from_device = np.linalg.inv(to_device_from_world)
+        ray_world = to_world_from_device[:3, :3] @ ray_camera
+        camera_pos_world = to_world_from_device[:3, 3]
+        
+        # Intersect ray with field plane (y = 0)
+        if abs(ray_world[1]) < RAY_PARALLEL_THRESHOLD:
+            return None  # Ray parallel to field
+            
+        t = -camera_pos_world[1] / ray_world[1]
+        if t < 0:
+            return None  # Intersection behind camera
+            
+        # Calculate intersection point
+        intersection = camera_pos_world + t * ray_world
+        return (intersection[0], intersection[2])  # Return (x, z) coordinates
+        
+    except Exception:
+        return None
 
 
 def _calculate_player_speeds(player_data: Dict, fps: int) -> None:
@@ -362,7 +424,7 @@ def _create_player_summary_image(player_data: Dict, ball_data: Dict, output_path
 
 if __name__ == "__main__":
     # Example usage
-    input_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/test_content/demo2.mp4"
-    model_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Complete/models/ball_and_player_model.pt"
+    input_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Final/test_content/demo2.mp4"
+    model_path = "/Users/alanpehz/Documents/Personal/True Computer Vision/FootballTracker/Final/models/ball_and_player_model.pt"
     
     analyze_players_from_video(input_path, model_path)
