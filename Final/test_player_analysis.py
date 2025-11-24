@@ -12,7 +12,7 @@ def test_player_analysis():
     # Paths
     input_path = "test_content/demo2.mp4"
     model_path = "models/ball_and_player_model.pt"
-    output_path = "test_results/player_analysis_summary.jpg"
+    output_path = "test_results/player_analysis_summary_3.jpg"
     
     # Check if files exist
     if not Path(input_path).exists():
